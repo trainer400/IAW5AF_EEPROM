@@ -8,6 +8,8 @@ typedef unsigned char uint8_t;
 typedef unsigned int uint16_t;  /* 16-bit on C166 */
 typedef unsigned long uint32_t; /* 32-bit on C166 */
 
+const uint8_t data[] = { INSERT_EEPROM_DATA_HERE!!! };
+
 static void my_putchar(char c)
 {
   while (!S0TIR)
@@ -50,7 +52,7 @@ static void init_spi()
   SSCEN = (volatile)0;
 
   /* ST10F269/C166 uses SSCCON for SSC (SPI) control */
-  SSCCON = (volatile)0x7fd7;
+  SSCCON = (volatile)0x4f57;
 
   /* Set baud rate to 10k */
   SSCBR = (volatile)0x007b;
@@ -108,7 +110,7 @@ void main(void)
   DP3 &= 0xF7FF;  /* RESET PORT 3.11 DIRECTION CONTROL (RXD INPUT) */
   S0TIC = 0x80;   /* SET TRANSMIT INTERRUPT FLAG                   */
   S0RIC = 0x00;   /* DELETE RECEIVE INTERRUPT FLAG                 */
-  S0BG = 0x51;    /* SET sBAUDRATE TO 9600 BAUD                     */
+  S0BG = 0x51;    /* SET BAUDRATE TO 9600 BAUD                     */
   S0CON = 0x8011; /* SET SERIAL MODE                               */
 #endif
 
@@ -125,7 +127,7 @@ void main(void)
   init_spi();
 
   /* Status register must be 0x00 at start */
-  uart_printf("Start EEPROM Reading!\r\n");
+  uart_printf("Start EEPROM Writing!\r\n");
 
   /* Read status register*/
   P4 = P4 & 0xffef;
@@ -162,25 +164,50 @@ void main(void)
 
   for (counter = 0; counter <= 0x07ff; counter++)
   {
-    /* Read eeprom status register */
+    /* Many SPI EEPROMs clear WEL after each write cycle, so re-enable writes
+     * for every byte before issuing the write command. */
     P4 = P4 & 0xffef;
-    (void)spi_send8(0x03);
-    (void)spi_send8((counter & 0xFF00) >> 8);
-    (void)spi_send8(counter & 0xFF);
-    reg_content = spi_send8(0x00);
+    (void)spi_send8(0x06);
     P4 |= 0x0010;
 
-    uart_printf("0x");
-    print_byte((counter & 0xFF00) >> 8);
-    print_byte(counter & 0xFF);
-    uart_printf(" -> ");
-    print_byte(reg_content);
-    uart_printf("\r\n");
+    /* Send the write command */
+    P4 = P4 & 0xffef;
+    (void)spi_send8(0x02);
+    (void)spi_send8((counter & 0xFF00u) >> 8u);
+    (void)spi_send8(counter & 0xFFu);
+    (void)spi_send8(data[counter]);
+    P4 |= 0x0010;
 
     /* Delay for the next instruction*/
     for (delay = 0; delay < 10000; delay++)
     {
       _nop_();
     }
+
+    /* Wait until the write has been completed*/
+    do
+    {
+      P4 = P4 & 0xffef;
+      (void)spi_send8(0x05);
+      reg_content = spi_send8(0x00);
+      P4 |= 0x0010;
+    } while (reg_content & 0x01);
+
+    /* Verify the memory has been correctly written */
+    P4 = P4 & 0xffef;
+    (void)spi_send8(0x03);
+    (void)spi_send8((counter & 0xFF00u) >> 8u);
+    (void)spi_send8(counter & 0x00FFu);
+    reg_content = spi_send8(0x00);
+    P4 |= 0x0010;
+
+    if(reg_content != data[counter])
+    {
+      uart_printf("Error: ");
+      print_byte(reg_content);
+      uart_printf("\r\n");
+    }
   }
-}
+
+  uart_printf("END!\r\n");
+} /* code were we've printed the dots (...).  */
